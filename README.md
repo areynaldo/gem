@@ -1,5 +1,5 @@
 # Good Enough Macros (WIP)
-## Because I wanted my own static site generator. 
+Because I wanted my own static site generator. 
 
 1. Define macros like this:
 
@@ -41,8 +41,8 @@ char *insert_callback(int arg_count, char**args)
 }
 
 static gem_function_definition_t function_definitions[] = 
-    // INSERT FUNCTION
     {
+    // INSERT FUNCTION
         {
             .begin = "$insert(",
             .callback = insert_callback,
@@ -55,7 +55,7 @@ static gem_function_definition_t function_definitions[] =
 
 2. Build.
 
-3. Apply on file like thiis:
+3. Apply on a file like this:
 
 ```md
 #t this is a title
