@@ -7,7 +7,7 @@ Because I wanted my own static site generator.
 #ifndef DEFINITIONS_H
 #define DEFINITIONS_H
 
-static gem_inline_definition_t definitions[] = 
+static gem_replace_definition_t definitions[] = 
 {
     // BOLD
     {
@@ -18,7 +18,7 @@ static gem_inline_definition_t definitions[] =
     },
 };
 
-static gem_line_definition_t line_definitions[] = 
+static gem_replace_definition_t line_definitions[] = 
 {
     // TITLE
     {
