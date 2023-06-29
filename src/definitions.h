@@ -7,7 +7,7 @@ char *insert_callback(int arg_count, char**args)
     return load_file_into_memory(args[0]);
 }
 
-static gem_inline_definition_t definitions[] = 
+static gem_replace_definition_t definitions[] = 
 {
     // BOLD
     {
@@ -19,7 +19,7 @@ static gem_inline_definition_t definitions[] =
 };
 
 // TODO(areynaldo): handle tabs/indents 
-static gem_line_definition_t line_definitions[] = 
+static gem_replace_definition_t line_definitions[] = 
 {
     // TITLE
     {
