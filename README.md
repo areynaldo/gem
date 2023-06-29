@@ -1,5 +1,5 @@
 # Good Enough Macros (WIP)
-## Because I wanted my own static site generator. 
+Because I wanted my own static site generator. 
 
 1. Define macros like this:
 
