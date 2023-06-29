@@ -41,8 +41,8 @@ char *insert_callback(int arg_count, char**args)
 }
 
 static gem_function_definition_t function_definitions[] = 
-    // INSERT FUNCTION
     {
+    // INSERT FUNCTION
         {
             .begin = "$insert(",
             .callback = insert_callback,
