@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
 
 #define internal static
 
@@ -33,9 +34,114 @@ internal void error(char *message)
     printf("Error: %s\n", message);
 }
 
+// ################ MEMORY ####################
+
+internal void *gem_memory_reserve(size_t size)
+{
+    void *result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
+    return result;
+}
+
+internal bool gem_memory_commit(void *ptr, size_t size)
+{
+    bool result = (VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE) != 0);
+    return result;
+}
+
+internal void gem_memory_decommit(void *ptr, size_t size)
+{
+    VirtualFree(ptr, size, MEM_DECOMMIT);
+}
+
+internal void gem_memory_release(void *ptr)
+{
+    VirtualFree(ptr, 0, MEM_RELEASE);
+}
+
+// ################ ARENA #####################
+
+// TODO(areynaldo): align
+
+#define DEFAULT_ARENA_RESERVE_SIZE (64 << 20) // 64 mb
+#define DEFAULT_ARENA_COMMIT_SIZE (64 << 10)  // 64 mb
+
+typedef struct
+{
+    char *buffer;
+    size_t current_offset;
+    size_t capacity;
+    size_t committed;
+} arena_t;
+
+arena_t gem_arena_new_default()
+{
+    arena_t result = {0};
+    result.buffer = gem_memory_reserve(DEFAULT_ARENA_RESERVE_SIZE);
+    result.capacity = DEFAULT_ARENA_RESERVE_SIZE;
+    gem_memory_commit(result.buffer, DEFAULT_ARENA_COMMIT_SIZE);
+    result.committed = DEFAULT_ARENA_COMMIT_SIZE;
+
+    return result;
+}
+
+void *gem_arena_allocate(arena_t *arena, size_t size)
+{
+    size_t new_offset = arena->current_offset + size;
+
+    if (new_offset > arena->capacity)
+    {
+        error("arena's capacity.");
+        return arena->buffer;
+    }
+    if (new_offset > arena->committed)
+    {
+        // TODO(areynaldo): check if full
+        gem_memory_commit(arena->buffer + arena->committed, DEFAULT_ARENA_COMMIT_SIZE);
+    }
+
+    void *result = (void *)(arena->buffer + arena->current_offset);
+    arena->current_offset = new_offset;
+
+    return result;
+}
+
+void gem_arena_release(arena_t *arena)
+{
+    gem_memory_release(arena->buffer);
+    arena = 0;
+}
+
+typedef struct
+{
+    arena_t *arena;
+    size_t marked_offset;
+    char *buffer;
+} temp_arena_t;
+
+temp_arena_t gem_temp_arena_begin(arena_t *arena)
+{
+    temp_arena_t temp;
+    temp.arena = arena;
+    temp.marked_offset = arena->current_offset;
+    temp.buffer = arena->buffer + arena->current_offset;
+    return temp;
+}
+
+void *gem_temp_arena_allocate(arena_t *arena, size_t size)
+{
+    return gem_arena_allocate(arena, size);
+}
+
+void gem_temp_arena_end(temp_arena_t temp)
+{
+    temp.arena->current_offset = temp.marked_offset;
+}
+
+arena_t main_arena;
+
 // ################ FILE IO ###################
 
-internal char *load_file_into_memory(char *file_name)
+internal char *gem_load_file_into_arena(arena_t *arena, char *file_name)
 {
     char *result = 0;
     FILE *file;
@@ -47,7 +153,7 @@ internal char *load_file_into_memory(char *file_name)
         int size = ftell(file);
         fseek(file, 0, SEEK_SET);
 
-        result = (char *)malloc(size);
+        result = (char *)gem_arena_allocate(arena, size);
         if (result)
         {
             fread(result, 1, size, file);
@@ -66,7 +172,7 @@ internal char *load_file_into_memory(char *file_name)
     return result;
 }
 
-internal char *load_file_into_memory_zero_terminated(char *file_name)
+internal char *gem_load_file_into_arena_zero_terminated(arena_t *arena, char *file_name)
 {
     char *result = 0;
     FILE *file;
@@ -77,7 +183,7 @@ internal char *load_file_into_memory_zero_terminated(char *file_name)
         int size = ftell(file);
         fseek(file, 0, SEEK_SET);
 
-        result = (char *)malloc(size+1);
+        result = (char *)gem_arena_allocate(arena, size + 1);
         if (result)
         {
             fread(result, 1, size, file);
@@ -117,6 +223,16 @@ internal bool gem_cstring_equals(char *str1, char *str2)
     return (strncmp(str1, str2, strlen(str2)) == 0);
 }
 
+// TODO: implement in strings struct
+internal char *gem_cstring_concat(arena_t *arena, char *str1, char *str2) 
+{
+    size_t result_size = strlen(str1) + strlen(str2) + 1;
+    char *result = gem_arena_allocate(arena, result_size);
+    strcpy_s(result, result_size, str1);
+    strcpy_s(result + strlen(str1), result_size - strlen(str2) - 1, str2);  // Fix: Add +1 to include null terminator
+    return result;
+}
+
 // ############### DEFINITIONS ###################
 
 typedef char *(gem_function_t)(int arg_count, char **args);
@@ -129,7 +245,7 @@ typedef struct
     gem_function_t *callback;
 } gem_function_definition_t;
 
-// TODO(areynaldo): maybe group old_new_pairs 
+// TODO(areynaldo): maybe group old_new_pairs
 typedef struct
 {
     char *old_begin;
@@ -176,14 +292,14 @@ internal void gem_int_stack_pop(gem_int_stack_t *stack)
 }
 
 // TODO(areynaldo): maybe group this two functions
-internal void output_new_skip_old_begin(gem_replace_definition_t definition, size_t *index)
+internal void gem_output_new_skip_old_begin(gem_replace_definition_t definition, size_t *index)
 {
     size_t length = definition.old_begin ? strlen(definition.old_begin) : 0;
     printf("%s", definition.new_begin);
     *index += length;
 }
 
-internal void output_new_skip_old_end(gem_replace_definition_t definition, size_t *index)
+internal void gem_output_new_skip_old_end(gem_replace_definition_t definition, size_t *index)
 {
     size_t length = definition.old_end ? strlen(definition.old_end) : 0;
     printf("%s", definition.new_end);
@@ -192,7 +308,9 @@ internal void output_new_skip_old_end(gem_replace_definition_t definition, size_
 
 char *build(char *file_name)
 {
-    char *source = load_file_into_memory_zero_terminated(file_name);
+    main_arena = gem_arena_new_default();
+
+    char *source = gem_load_file_into_arena_zero_terminated(&main_arena, file_name);
 
     size_t index = 0;
 
@@ -205,7 +323,7 @@ char *build(char *file_name)
     gem_replace_definition_t *last_line_definition = NULL;
     bool is_new_line = true;
 
-    while (source[index+1] != '\0')
+    while (source[index] != '\0')
     {
         if (source[index] == '\\')
         {
@@ -226,7 +344,7 @@ char *build(char *file_name)
                     last_line_definition = &current_definition;
 
                     // Output new_begin
-                    output_new_skip_old_begin(current_definition, &index);
+                    gem_output_new_skip_old_begin(current_definition, &index);
                     break;
                 }
             }
@@ -287,7 +405,8 @@ char *build(char *file_name)
                 continue;
             }
         }
-         // Handle normal definitions
+
+        // Handle normal definitions
         if (inline_definitions_stack.size != 0)
         {
             gem_replace_definition_t current_definition = definitions[inline_definitions_stack.top];
@@ -295,7 +414,7 @@ char *build(char *file_name)
             if (gem_cstring_equals(&source[index], current_definition.old_end))
             {
                 gem_int_stack_pop(&inline_definitions_stack);
-                output_new_skip_old_end(current_definition, &index);
+                gem_output_new_skip_old_end(current_definition, &index);
                 continue;
             }
         }
@@ -305,14 +424,14 @@ char *build(char *file_name)
             for (int definitions_index = 0; definitions_index < array_length(definitions); definitions_index++)
             {
 
-                gem_replace_definition_t current_definition = definitions[inline_definitions_stack.top];
+                gem_replace_definition_t current_definition = definitions[definitions_index];
                 if (gem_cstring_equals(&source[index], current_definition.old_begin))
                 {
                     // Push to stack
                     gem_int_stack_push(&inline_definitions_stack, definitions_index);
 
                     // Output new_begin
-                    output_new_skip_old_begin(current_definition, &index);
+                    gem_output_new_skip_old_begin(current_definition, &index);
 
                     begin_found = true;
                     break;
@@ -338,7 +457,7 @@ char *build(char *file_name)
                     old_end_length = strlen(last_line_definition->old_end);
                 }
 
-                output_new_skip_old_end(*last_line_definition, &index);
+                gem_output_new_skip_old_end(*last_line_definition, &index);
                 index++; // Skip newline
 
                 last_line_definition = NULL;
@@ -352,15 +471,17 @@ char *build(char *file_name)
     }
 
     // Handle line definition end if EOF
-	if (last_line_definition)
-	{
-		size_t old_end_length = 0;
-		if (last_line_definition->old_end)
-		{
-			old_end_length = strlen(last_line_definition->old_end);
-		}
-		output_new_skip_old_end(*last_line_definition, &index);
-	}
+    if (last_line_definition)
+    {
+        size_t old_end_length = 0;
+        if (last_line_definition->old_end)
+        {
+            old_end_length = strlen(last_line_definition->old_end);
+        }
+        gem_output_new_skip_old_end(*last_line_definition, &index);
+    }
+
+    gem_arena_release(&main_arena);
     return source;
 }
 
